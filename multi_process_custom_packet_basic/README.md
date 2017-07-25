@@ -16,12 +16,12 @@ $ make
 ##### TX Process (DPDK_Sender):
 
 ```sh
-$ sudo ./build/sender -l 0 --proc-type=auto --file-prefix lalal --socket-mem 400
+$ sudo ./build/sender -l 0 --proc-type=auto --file-prefix memory --socket-mem 400
 ```
 
 ##### RX Process (DPDK_Receiver):
 
 ```sh
-$ sudo ./build/receiver -l 1 -c 2 --proc-type=auto --file-prefix lalal
+$ sudo ./build/receiver -l 1 -c 2 --proc-type=auto --file-prefix memory
 ```
 
