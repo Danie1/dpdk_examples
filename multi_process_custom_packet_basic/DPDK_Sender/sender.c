@@ -26,9 +26,10 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (500) //in ms
+#define REFRESH_TIME (200) //in ms
 #define PKT_COUNTER_RESET_TIME (1000) //in ms
 #define NUM_OF_TYPES (16)
+#define PACKET_LIMIT (1000)
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
 static void print(int received, int total_recv, int sent, int total_sent,
@@ -257,13 +258,35 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		pkts_type_counter[i] = 0;
 	}
 
+	struct rte_mbuf *bufs[BURST_SIZE];
+
 	/* Run until the application is quit or killed. */
 	for (;;) {
 		/* Get burst of RX packets, from first port of pair. */
 		curr_time = clock();
-		
+		uint16_t nb_tx = 0;
 		uint16_t nb_rx = 0;
-		struct rte_mbuf *bufs[BURST_SIZE];
+		
+		time_passed = ((curr_time - last_pkt_counter_reset) * 1000) / CLOCKS_PER_SEC;
+		if (time_passed > PKT_COUNTER_RESET_TIME)
+		{
+			last_pkt_counter_reset = curr_time;
+			last_pkts_counter = pkts_counter;
+			pkts_counter = 0;
+		}
+
+		time_passed = ((curr_time - last_table_show_time) * 1000) / CLOCKS_PER_SEC;
+		if (time_passed > REFRESH_TIME)
+		{
+			print(nb_rx, total_recv, nb_tx, total_sent, last_pkts_counter, pkts_type_counter);
+			last_table_show_time = curr_time;
+		}
+
+		if (pkts_counter > PACKET_LIMIT)
+		{
+			continue;
+		}
+
 		memset(bufs, 0x0, BURST_SIZE * sizeof(struct rte_mbuf *));
 
 		for (i = 0; i < BURST_SIZE; i++)
@@ -280,34 +303,21 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			pkt_index = 0;
 		}
 		
-		uint16_t nb_tx = 0;
 		// Send burst of TX packets, to second port of pair.
-
 		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, BURST_SIZE);
 		total_sent += nb_tx;
 		pkts_counter += nb_tx;
 
-		time_passed = ((curr_time - last_pkt_counter_reset) * 1000) / CLOCKS_PER_SEC;
-		if (time_passed > PKT_COUNTER_RESET_TIME)
-		{
-			last_pkt_counter_reset = curr_time;
-			last_pkts_counter = pkts_counter;
-			pkts_counter = 0;
-		}
-
-		time_passed = ((curr_time - last_table_show_time) * 1000) / CLOCKS_PER_SEC;
-		if (time_passed > REFRESH_TIME)
-		{
-			print(nb_rx, total_recv, nb_tx, total_sent, last_pkts_counter, pkts_type_counter);
-			last_table_show_time = curr_time;
-		}
+		
 
 		/* Free any unsent packets. */
-		if (unlikely(nb_tx < nb_rx))
+		if (unlikely(nb_tx < BURST_SIZE))
 		{
 			uint16_t buf = 0;
-			for (buf = nb_tx; buf < nb_rx; buf++)
-				rte_pktmbuf_free(bufs[buf]);
+			for (buf = nb_tx; buf < BURST_SIZE; buf++)
+			{
+				pkts_type_counter[buf]--;
+			}
 		}
 	}
 }
