@@ -6,6 +6,8 @@
 #include <rte_lcore.h>
 #include <rte_mbuf.h>
 #include <rte_errno.h>
+#include <time.h>
+#include <stdlib.h>
 
 #define PORT_SEND 0
 
@@ -32,11 +34,11 @@ static void print(int received, int total_recv, int sent, int total_sent)
 	printf("%s%s", clr, topLeft);
 
 	printf("\nPort statistics ====================================");
-	printf("\nPackets received: %d", received);
-	printf("\nPackets sent: %d", sent);
+	printf("\nPackets received last burst: %d", received);
+	printf("\nPackets sent last burst: %d", sent);
 	printf("\nAggregate statistics ===============================");
-	printf("\nTotal packets received: %d", total_recv);
-	printf("\nTotal packets sent: %d", total_sent);
+	printf("\nTotal packets received overall: %d", total_recv);
+	printf("\nTotal packets sent overall: %d", total_sent);
 	printf("\n====================================================\n");
 }
 
@@ -102,25 +104,6 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	return 0;
 }
 
-
-static void mac_updating(struct rte_mbuf *m, unsigned dest_portid)
-{
-	struct ether_hdr *eth;
-	void *tmp;
-
-	eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
-
-	/* 02:00:00:00:00:xx */
-	tmp = &eth->d_addr.addr_bytes[0];
-	//*((uint64_t *)tmp) = 0xb93e10290c00;
-	//*((uint64_t *)tmp) = 0xc33e10290c00;
-
-	*((uint64_t *)tmp) = 0x000000000002;
-
-	/* src addr */
-	ether_addr_copy(&l2fwd_ports_eth_addr[0], &eth->s_addr);
-}
-
  
 struct payload
 {
@@ -133,59 +116,87 @@ struct eth_header
 {
     char dst[6];
     char src[6];
-    char protocol[2];
+    unsigned short int protocol;
 };
 
-static void get_packet(struct rte_mbuf **m, struct rte_mempool* mbuf_pool)
+
+#define MAX_PKT_COUNT 0xffff
+#define GET_RANDOM_BETWEEN(start, end) ((rand(time(NULL)) % (end - start + 1)) + start)
+#define REFRESH_TIME (2000) //in ms
+
+/**
+* Creates and returns a default payload
+* return - payload with default values
+*/
+static struct payload create_payload(int type, int index, const char* msg, unsigned int msg_len)
 {
-    unsigned int /*ch_index, */data_len;
-    unsigned int ready_pkts = 0;
-    //unsigned int pkt_index;
-    struct rte_mbuf *bufs = NULL;
-    struct payload ready_payload;
-    struct payload* payload_ref;
-    struct payload* payload_loc;
-    struct eth_header ready_eth_header;
-    struct eth_header* eth_header_ref;
-    struct eth_header* eth_header_loc;
-
-    ready_payload.type = 4;
-    ready_payload.index = 546;
-    rte_memcpy(ready_payload.msg, "Read Me\n\0", 9);
- 
- 	ready_eth_header.dst[0] = 0x00;
- 	ready_eth_header.dst[1] = 0x0c;
- 	ready_eth_header.dst[2] = 0x29;
- 	ready_eth_header.dst[3] = 0x10;
- 	ready_eth_header.dst[4] = 0x3e;
-    ready_eth_header.dst[5] = 0xc3;
-    
-    ready_eth_header.src[0] = 0x00;
-    ready_eth_header.src[1] = 0x0c;
-    ready_eth_header.src[2] = 0x29;
-    ready_eth_header.src[3] = 0x10;
-    ready_eth_header.src[4] = 0x3e;
-    ready_eth_header.src[5] = 0xb9;
-
-    ready_eth_header.protocol[0] = 8;
-    ready_eth_header.protocol[1] = 0;
-
-	bufs = rte_pktmbuf_alloc(mbuf_pool);
-
-    payload_ref = &ready_payload;
-    eth_header_ref = &ready_eth_header;
-
-    if (bufs != NULL)
-    {
-        eth_header_loc = rte_pktmbuf_append(bufs, sizeof(struct eth_header) + sizeof(struct payload));
-        payload_loc = eth_header_loc + sizeof(struct eth_header);//rte_pktmbuf_append(bufs, sizeof(struct eth_header) + sizeof(struct payload));
-    }
-
-    rte_memcpy(eth_header_loc, eth_header_ref, sizeof(struct eth_header));
-    rte_memcpy(payload_loc, payload_ref, sizeof(struct payload));
-
-    *m = bufs;
+	struct payload pl;
+	pl.type = type;
+	pl.index = index;
+	rte_memcpy(pl.msg, msg, msg_len);
+	return pl;
 }
+
+/**
+* Creates and returns a default eth header 
+* return - eth header with default values
+*/
+static struct eth_header create_eth_header(void) /*uint64_t src, uint64_t dst, uint16_t protocol*/
+{
+	//unsigned int byte_index;
+	struct eth_header header;
+	/*for (byte_index = 0; byte_index < 6; byte_index++)
+	{
+		header.dst[byte_index] = (dst & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
+		header.src[byte_index] = (src & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
+	}*/
+	header.dst[0] = 0x00;
+ 	header.dst[1] = 0x0c;
+ 	header.dst[2] = 0x29;
+ 	header.dst[3] = 0x90;
+ 	header.dst[4] = 0x28;
+    header.dst[5] = 0x02;
+    
+    header.src[0] = 0x00;
+    header.src[1] = 0x0c;
+    header.src[2] = 0x29;
+    header.src[3] = 0x10;
+    header.src[4] = 0x3e;
+    header.src[5] = 0xb9;
+	header.protocol = 0x0008;
+	return header;
+}
+
+/**
+* Creates the pointer to the rte_mbuf with the content of the packet.
+* bufs - the pointer of the rte_mbuf which we want the packet to be in
+* ready_eth_header - the eth header of the packet
+* ready_payload - the payload of the packet
+*/
+static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_pool, struct payload ready_payload)
+{
+	struct payload* payload_ref;
+	void* payload_loc;
+	struct eth_header* eth_header_ref;
+	void* eth_header_loc;
+	struct eth_header ready_eth_header;
+
+	*buf = rte_pktmbuf_alloc(mbuf_pool);
+	
+	payload_ref = &ready_payload;
+	ready_eth_header = create_eth_header();
+	eth_header_ref = &ready_eth_header;
+
+	if (buf != NULL)
+	{
+		eth_header_loc = rte_pktmbuf_append(*buf, sizeof(struct eth_header));
+		payload_loc = rte_pktmbuf_append(*buf, sizeof(struct payload));
+	}
+
+	rte_memcpy(eth_header_loc, eth_header_ref , 14);
+	rte_memcpy(payload_loc, payload_ref, sizeof(struct payload));
+}
+
 
 /*
  * The lcore main. This is the main thread that does the work, reading from
@@ -197,6 +208,11 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	uint8_t port;
 	int total_recv = 0, total_sent = 0;
 	int i = 0;
+	unsigned int  pkt_index = 0;
+	struct payload ready_payload;
+	clock_t curr_time, last_time;
+	unsigned int time_passed;
+
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -213,33 +229,48 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 			rte_lcore_id());
 
+
+	srand(time(NULL));
+	last_time = 0;
+
 	/* Run until the application is quit or killed. */
 	for (;;) {
 		/* Get burst of RX packets, from first port of pair. */
+		curr_time = clock();
+		time_passed = ((curr_time - last_time) * 1000) / CLOCKS_PER_SEC;
+		
 		uint16_t nb_rx = 0;
 		struct rte_mbuf *bufs[BURST_SIZE];
 		memset(bufs, 0x0, BURST_SIZE * sizeof(struct rte_mbuf *));
 
-		get_packet(&bufs[0], mbuf_pool);
-		nb_rx += 1;
+		for (i = 0; i < BURST_SIZE; i++)
+		{
+			ready_payload = create_payload(rand()%16, pkt_index + i, "Read Me\n\0", 9);
+			create_packet(&bufs[i], mbuf_pool, ready_payload);
+		}
+		nb_rx += BURST_SIZE;
+		pkt_index += BURST_SIZE;
+
+		if (pkt_index > MAX_PKT_COUNT)
+		{
+			pkt_index = 0;
+		}
 		
 		uint16_t nb_tx = 0;
 		// Send burst of TX packets, to second port of pair.
 
-		for (i = 0; i < 5; i++)
-		{
-			nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, 1);
-		}
-
+		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, BURST_SIZE);
 		total_sent += nb_tx;
 
-		if (nb_tx > 0)
+		if ((time_passed > REFRESH_TIME) && (nb_tx > 0))
 		{
 			print(nb_rx, total_recv, nb_tx, total_sent);
+			last_time = curr_time;
 		}
 
 		/* Free any unsent packets. */
-		if (unlikely(nb_tx < nb_rx)) {
+		if (unlikely(nb_tx < nb_rx))
+		{
 			uint16_t buf = 0;
 			for (buf = nb_tx; buf < nb_rx; buf++)
 				rte_pktmbuf_free(bufs[buf]);
@@ -255,7 +286,7 @@ int
 main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool1;
-	struct rte_mempool *mbuf_pool2;
+	//struct rte_mempool *mbuf_pool2;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
 	int ret = rte_eal_init(argc, argv);
