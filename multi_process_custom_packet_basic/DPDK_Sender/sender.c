@@ -72,16 +72,20 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 	printf("%s%s", clr, topLeft);
 
 	printf("\n=================================================================================");
-	printf("\n|Pkts counted since last check : %d pkts", pkts_counted);
-	printf("\n|check time : %.2fs", (double)PKT_COUNTER_RESET_TIME/1000);
-	printf("\n|Pkts/s since last check : %d pkts/s",
+	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t|", pkts_counted);
+	printf("\n|Check time : %.2fs\t\t\t\t\t\t\t\t|", (double)PKT_COUNTER_RESET_TIME/1000);
+	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t|",
 				(pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
-	printf("\n|running time : %.2f", time_passed_overall/1000);
+	printf("\n|Running time : %.2f\t\t\t\t\t\t\t\t|", time_passed_overall/1000);
+
 	printf("\n=================================================================================");
-	
+	printf("\n|               |\t current session\t|\t     overall\t\t|");
+	printf("\n|    Type #     =================================================================");
+	printf("\n|      \t\t|  pkts sent\t|  pkts dropped\t|  pkts sent\t|  pkts dropped\t|");
+	printf("\n=================================================================================");
 	for (type_index = 0; type_index < NUM_OF_TYPES; type_index++)
 	{
-		printf("\n|type num %u\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+		printf("\n|Type #%u\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
 					type_index,
 					pkts_type_counter[type_index],
 					pkts_dropped_type_counter[type_index],
@@ -89,13 +93,13 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 					pkts_dropped_type_counter_overall[type_index]
 					);
 	}
-	printf("\n=================================================================================");
-	printf("\n|Total by types\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+	/*printf("\n=================================================================================");
+	printf("\n|  Total by types\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
 					pkts_counted,
 					pkts_dropped_counted,
 					total_sent,
 					total_dropped
-					);
+					);*/
 	printf("\n=================================================================================");
 	printf("\n|Total\t\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
 					pkts_counted,
@@ -380,6 +384,7 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
 			pkts_type_counter[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
+			pkts_type_counter_overall[ready_payload.type] += 1;
 			create_packet(&bufs[i], mbuf_pool, ready_payload);
 		}
 		nb_rx += BURST_SIZE;
@@ -395,19 +400,20 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		/* Free any unsent packets. */
 		if (unlikely(nb_tx < BURST_SIZE))
 		{
-			uint16_t buf = 0;
-			for (buf = nb_tx; buf < BURST_SIZE; buf++)
-			{
-				pkts_dropped_type_counter[buf]++;
-			}
+			// uint16_t buf = 0;
+			// unsigned int type = 0;
+			// unsigned int data_off = 0;
+			// for (buf = nb_tx; buf < BURST_SIZE; buf++)
+			// {
+			// 	data_off = bufs[buf]->data_off;
+			// 	type = ((struct payload*)(bufs[buf]->buf_addr + data_off))->type;
+			// 	printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
+			// 	// pkts_dropped_type_counter[bufs[buf]]++;
+			// 	// pkts_dropped_type_counter_overall[buf]++;
+			// }
 
-			pkts_dropped_counter += BURST_SIZE - nb_tx;
-
-			for (i = 0; i < BURST_SIZE; i++)
-			{
-				pkts_type_counter_overall[i] += pkts_type_counter[i];
-				pkts_dropped_type_counter_overall[i] += pkts_dropped_type_counter[i];
-			}
+			pkts_dropped_counter += (BURST_SIZE - nb_tx);
+			pkts_dropped_counter_overall += (BURST_SIZE - nb_tx);
 		}
 	}
 }
