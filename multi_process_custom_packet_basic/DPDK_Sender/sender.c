@@ -16,7 +16,7 @@
 
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
-#define BURST_SIZE 32
+#define BURST_SIZE 1024
 
 static struct ether_addr l2fwd_ports_eth_addr[1];
 
@@ -216,13 +216,13 @@ static struct eth_header create_eth_header(uint64_t src, uint64_t dst, uint16_t 
 		header.dst[byte_index] = (dst & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 		header.src[byte_index] = (src & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 	}*/
-	header.dst[0] = ((0xff0000000000 & dst) >> 40)	| ((0x00ff00000000 & dst) >> 24);
-	header.dst[1] = ((0x0000ff000000 & dst) >> 24)	| ((0x000000ff0000 & dst) >> 8);
-	header.dst[2] = ((0x00000000ff00 & dst) >> 8)	| ((0x0000000000ff & dst) << 8);
-	header.src[0] = ((0xff0000000000 & src) >> 40)	| ((0x00ff00000000 & src) >> 24);
-	header.src[1] = ((0x0000ff000000 & src) >> 24)	| ((0x000000ff0000 & src) >> 8);
-	header.src[2] = ((0x00000000ff00 & src) >> 8)	| ((0x0000000000ff & src) << 8);
-	header.protocol = ((0xff00 & protocol) >> 8) | ((0x00ff & protocol) >> 0);
+	header.dst[0] = 	((0xff0000000000 & dst) >> 40)	| ((0x00ff00000000 & dst) >> 24);
+	header.dst[1] = 	((0x0000ff000000 & dst) >> 24)	| ((0x000000ff0000 & dst) >> 8);
+	header.dst[2] = 	((0x00000000ff00 & dst) >> 8)	| ((0x0000000000ff & dst) << 8);
+	header.src[0] = 	((0xff0000000000 & src) >> 40)	| ((0x00ff00000000 & src) >> 24);
+	header.src[1] = 	((0x0000ff000000 & src) >> 24)	| ((0x000000ff0000 & src) >> 8);
+	header.src[2] = 	((0x00000000ff00 & src) >> 8)	| ((0x0000000000ff & src) << 8);
+	header.protocol = 	((0xff00 & protocol) >> 8)		| ((0x00ff & protocol) >> 0);
 	return header;
 }
 
@@ -232,7 +232,7 @@ static struct eth_header create_eth_header(uint64_t src, uint64_t dst, uint16_t 
 * ready_eth_header - the eth header of the packet
 * ready_payload - the payload of the packet
 */
-static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_pool, struct payload ready_payload)
+static inline int create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_pool, struct payload ready_payload)
 {
 	struct payload* payload_ref;
 	void* payload_loc;
@@ -246,14 +246,16 @@ static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf
 	ready_eth_header = create_eth_header(0x010203040506, 0x05060708090a, 0x0800);
 	eth_header_ref = &ready_eth_header;
 
-	if (buf != NULL)
+	if (*buf == NULL)
 	{
-		eth_header_loc = rte_pktmbuf_append(*buf, sizeof(struct eth_header));
-		payload_loc = rte_pktmbuf_append(*buf, sizeof(struct payload));
+		return 0;
 	}
 
-	rte_memcpy(eth_header_loc, eth_header_ref , 14);
+	eth_header_loc = rte_pktmbuf_append(*buf, sizeof(struct eth_header));
+	payload_loc = rte_pktmbuf_append(*buf, sizeof(struct payload));
+	rte_memcpy(eth_header_loc, eth_header_ref , sizeof(struct eth_header));
 	rte_memcpy(payload_loc, payload_ref, sizeof(struct payload));
+	return 1;
 }
 
 
@@ -382,16 +384,19 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		for (i = 0; i < BURST_SIZE; i++)
 		{
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
+			if(create_packet(&bufs[i], mbuf_pool, ready_payload) == 0)
+			{
+				continue;
+			}
 			pkts_type_counter[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
-			create_packet(&bufs[i], mbuf_pool, ready_payload);
 		}
 		nb_rx += BURST_SIZE;
 		pkt_index += nb_tx;
 		
 		// Send burst of TX packets, to second port of pair.
-		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, BURST_SIZE);
+		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, nb_tx);
 		pkts_counter += nb_tx;
 		pkts_counter_overall += nb_tx;
 		
@@ -400,17 +405,21 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		/* Free any unsent packets. */
 		if (unlikely(nb_tx < BURST_SIZE))
 		{
-			// uint16_t buf = 0;
-			// unsigned int type = 0;
-			// unsigned int data_off = 0;
-			// for (buf = nb_tx; buf < BURST_SIZE; buf++)
-			// {
-			// 	data_off = bufs[buf]->data_off;
-			// 	type = ((struct payload*)(bufs[buf]->buf_addr + data_off))->type;
-			// 	printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
-			// 	// pkts_dropped_type_counter[bufs[buf]]++;
-			// 	// pkts_dropped_type_counter_overall[buf]++;
-			// }
+			uint16_t buf = 0;
+			unsigned int type = 0;
+			unsigned int data_off = 0;
+			for (buf = nb_tx; buf < BURST_SIZE; buf++)
+			{
+				if(bufs[buf] == NULL)
+				{
+					continue;
+				}
+				data_off = bufs[buf]->data_off;
+				type = ((struct payload*)(bufs[buf]->buf_addr + data_off + sizeof(struct eth_header)))->type;
+				printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
+				pkts_dropped_type_counter[type]++;
+				pkts_dropped_type_counter_overall[type]++;
+			}
 
 			pkts_dropped_counter += (BURST_SIZE - nb_tx);
 			pkts_dropped_counter_overall += (BURST_SIZE - nb_tx);
