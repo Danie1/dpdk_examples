@@ -44,6 +44,8 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 					unsigned int total_sent, unsigned int total_dropped,
 					unsigned int pkts_type_counter[], unsigned int pkts_type_counter_overall[],
 					unsigned int pkts_dropped_type_counter[], unsigned int pkts_dropped_type_counter_overall[],
+					unsigned int pkts_creation_counter, unsigned int pkts_creation_failed_counter,
+					unsigned pkts_creation_counter_overall, unsigned int pkts_creation_failed_counter_overall,
 					float time_passed_overall)
 {
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
@@ -72,9 +74,9 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 	printf("%s%s", clr, topLeft);
 
 	printf("\n=================================================================================");
-	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t|", pkts_counted);
+	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t    \t|", pkts_counted);
 	printf("\n|Check time : %.2fs\t\t\t\t\t\t\t\t|", (double)PKT_COUNTER_RESET_TIME/1000);
-	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t|",
+	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t    \t|",
 				(pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
 	printf("\n|Running time : %.2f\t\t\t\t\t\t\t\t|", time_passed_overall/1000);
 
@@ -101,11 +103,18 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 					total_dropped
 					);*/
 	printf("\n=================================================================================");
-	printf("\n|Total\t\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+	printf("\n|Total tx\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
 					pkts_counted,
 					pkts_dropped_counted,
 					total_sent,
 					total_dropped
+					);
+	printf("\n=================================================================================");
+	printf("\n|Total created\t|\t%u\t|\t%u\t|\t%u\t|    %u\t|",
+					pkts_creation_counter,
+					pkts_creation_failed_counter,
+					pkts_creation_counter_overall,
+					pkts_creation_failed_counter_overall
 					);
 	printf("\n=================================================================================\n");
 }
@@ -286,6 +295,13 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	unsigned int last_pkts_dropped_type_counter_overall[NUM_OF_TYPES];
 	unsigned int pkts_dropped_type_counter[NUM_OF_TYPES];
 	unsigned int last_pkts_dropped_type_counter[NUM_OF_TYPES];
+
+	unsigned int pkts_creation_counter, pkts_creation_counter_overall;
+	unsigned int pkts_creation_failed_counter, pkts_creation_failed_counter_overall;
+	unsigned int last_pkts_creation_counter, last_pkts_creation_counter_overall;
+	unsigned int last_pkts_creation_failed_counter, last_pkts_creation_failed_counter_overall;
+	
+	
 	float time_passed_overall;
 
 
@@ -328,6 +344,16 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		pkts_dropped_type_counter_overall[i] = 0;
 	}
 
+	pkts_creation_counter = 0;
+	pkts_creation_counter_overall = 0;
+	pkts_creation_failed_counter = 0;
+	pkts_creation_failed_counter_overall = 0;
+	last_pkts_creation_counter = 0;
+	last_pkts_creation_counter_overall = 0;
+	last_pkts_creation_failed_counter = 0;
+	last_pkts_creation_failed_counter_overall = 0;
+
+
 	time_passed_overall = 0;
 
 	struct rte_mbuf *bufs[BURST_SIZE];
@@ -338,6 +364,7 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		curr_time = clock();
 		uint16_t nb_tx = 0;
 		uint16_t nb_rx = 0;
+		uint16_t nb_created = 0;
 		
 		time_passed = ((curr_time - last_pkt_counter_reset) * 1000) / CLOCKS_PER_SEC;
 		if (time_passed > PKT_COUNTER_RESET_TIME)
@@ -347,8 +374,16 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			last_pkts_dropped_counter = pkts_dropped_counter;
 			last_pkts_counter_overall = pkts_counter_overall;
 			last_pkts_dropped_counter_overall = pkts_dropped_counter_overall;
+			last_pkts_creation_counter = pkts_creation_counter;
+			last_pkts_creation_counter_overall = pkts_creation_counter_overall;
+			last_pkts_creation_failed_counter = pkts_creation_failed_counter;
+			last_pkts_creation_failed_counter_overall = pkts_creation_failed_counter_overall;			
+
 			pkts_counter = 0;
 			pkts_dropped_counter = 0;
+			pkts_creation_counter = 0;
+			pkts_creation_failed_counter = 0;
+
 			for (i = 0; i < NUM_OF_TYPES; i++)
 			{
 				last_pkts_type_counter[i] = pkts_type_counter[i];
@@ -369,6 +404,8 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 					last_pkts_counter_overall, last_pkts_dropped_counter_overall,
 					last_pkts_type_counter, last_pkts_type_counter_overall,
 					last_pkts_dropped_type_counter, last_pkts_dropped_type_counter_overall,
+					last_pkts_creation_counter, last_pkts_creation_failed_counter,
+					last_pkts_creation_counter_overall, last_pkts_creation_failed_counter_overall,
 					time_passed_overall);
 
 			last_table_show_time = curr_time;
@@ -388,15 +425,21 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			{
 				continue;
 			}
+			
+			nb_created += 1;
 			pkts_type_counter[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
-			pkts_type_counter_overall[ready_payload.type] += 1;
 		}
+		pkts_creation_counter += nb_created;
+		pkts_creation_counter_overall += nb_created;
+		pkts_creation_failed_counter += (BURST_SIZE - nb_created);
+		pkts_creation_failed_counter_overall += (BURST_SIZE - nb_created);
+
 		nb_rx += BURST_SIZE;
 		pkt_index += nb_tx;
 		
 		// Send burst of TX packets, to second port of pair.
-		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, nb_tx);
+		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, nb_created);
 		pkts_counter += nb_tx;
 		pkts_counter_overall += nb_tx;
 		
@@ -416,13 +459,13 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 				}
 				data_off = bufs[buf]->data_off;
 				type = ((struct payload*)(bufs[buf]->buf_addr + data_off + sizeof(struct eth_header)))->type;
-				printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
+				//printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
 				pkts_dropped_type_counter[type]++;
 				pkts_dropped_type_counter_overall[type]++;
 			}
 
-			pkts_dropped_counter += (BURST_SIZE - nb_tx);
-			pkts_dropped_counter_overall += (BURST_SIZE - nb_tx);
+			pkts_dropped_counter += (nb_created - nb_tx);
+			pkts_dropped_counter_overall += (nb_created - nb_tx);
 		}
 	}
 }
