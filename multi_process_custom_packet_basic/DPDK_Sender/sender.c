@@ -26,38 +26,84 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (200) //in ms
-#define PKT_COUNTER_RESET_TIME (1000) //in ms
+#define REFRESH_TIME (50) //in ms
+#define PKT_COUNTER_RESET_TIME (50) //in ms
 #define NUM_OF_TYPES (16)
-#define PACKET_LIMIT (1000)
+#define PACKET_LIMIT (1000000000)
+
+
+
+
+
+
+
+
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
-static void print(int received, int total_recv, int sent, int total_sent,
-					unsigned int pkts_counted, unsigned int pkts_type_counter[])
+static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
+					unsigned int total_sent, unsigned int total_dropped,
+					unsigned int pkts_type_counter[], unsigned int pkts_type_counter_overall[],
+					unsigned int pkts_dropped_type_counter[], unsigned int pkts_dropped_type_counter_overall[],
+					float time_passed_overall)
 {
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
 	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
 	unsigned int type_index;
+	unsigned int total_by_types[4];
+
+	for (type_index = 0; type_index < NUM_OF_TYPES; type_index++)
+	{
+		//Puts zeroes before first use
+		if (type_index == 0)
+		{
+			total_by_types[0] = 0;
+			total_by_types[1] = 0;
+			total_by_types[2] = 0;
+			total_by_types[3] = 0;
+		}
+
+		total_by_types[0] += pkts_type_counter[type_index];
+		total_by_types[1] += pkts_dropped_type_counter[type_index];
+		total_by_types[2] += pkts_type_counter_overall[type_index];
+		total_by_types[3] += pkts_dropped_type_counter_overall[type_index];
+	}
 
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
 
-	printf("\nPort statistics ====================================");
-	printf("\nPackets received last burst: %d", received);
-	printf("\nPackets sent last burst: %d", sent);
-	printf("\nAggregate statistics ===============================");
-	printf("\nTotal packets received overall: %d", total_recv);
-	printf("\nTotal packets sent overall: %d", total_sent);
-	printf("\n====================================================");
-	printf("\nPkts counted since last check : %d", pkts_counted);
-	printf("\nPkts/ms since last check : %d\n", (pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
-
+	printf("\n=================================================================================");
+	printf("\n|Pkts counted since last check : %d pkts", pkts_counted);
+	printf("\n|check time : %.2fs", (double)PKT_COUNTER_RESET_TIME/1000);
+	printf("\n|Pkts/s since last check : %d pkts/s",
+				(pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
+	printf("\n|running time : %.2f", time_passed_overall/1000);
+	printf("\n=================================================================================");
+	
 	for (type_index = 0; type_index < NUM_OF_TYPES; type_index++)
 	{
-		printf("type num %u:\t%u\n", type_index, pkts_type_counter[type_index]);
+		printf("\n|type num %u\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+					type_index,
+					pkts_type_counter[type_index],
+					pkts_dropped_type_counter[type_index],
+					pkts_type_counter_overall[type_index],
+					pkts_dropped_type_counter_overall[type_index]
+					);
 	}
-
-	printf("\n====================================================\n");
+	printf("\n=================================================================================");
+	printf("\n|Total by types\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+					pkts_counted,
+					pkts_dropped_counted,
+					total_sent,
+					total_dropped
+					);
+	printf("\n=================================================================================");
+	printf("\n|Total\t\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+					pkts_counted,
+					pkts_dropped_counted,
+					total_sent,
+					total_dropped
+					);
+	printf("\n=================================================================================\n");
 }
 
 
@@ -132,8 +178,8 @@ struct payload
  
 struct eth_header
 {
-    char dst[6];
-    char src[6];
+    unsigned short int dst[3];
+    unsigned short int src[3];
     unsigned short int protocol;
 };
 
@@ -157,7 +203,7 @@ static struct payload create_payload(int type, int index, const char* msg, unsig
 * Creates and returns a default eth header 
 * return - eth header with default values
 */
-static struct eth_header create_eth_header(void) /*uint64_t src, uint64_t dst, uint16_t protocol*/
+static struct eth_header create_eth_header(uint64_t src, uint64_t dst, uint16_t protocol) /*uint64_t src, uint64_t dst, uint16_t protocol*/
 {
 	//unsigned int byte_index;
 	struct eth_header header;
@@ -166,20 +212,13 @@ static struct eth_header create_eth_header(void) /*uint64_t src, uint64_t dst, u
 		header.dst[byte_index] = (dst & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 		header.src[byte_index] = (src & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 	}*/
-	header.dst[0] = 0x00;
- 	header.dst[1] = 0x0c;
- 	header.dst[2] = 0x29;
- 	header.dst[3] = 0x90;
- 	header.dst[4] = 0x28;
-    header.dst[5] = 0x02;
-    
-    header.src[0] = 0x00;
-    header.src[1] = 0x0c;
-    header.src[2] = 0x29;
-    header.src[3] = 0x10;
-    header.src[4] = 0x3e;
-    header.src[5] = 0xb9;
-	header.protocol = 0x0008;
+	header.dst[0] = ((0xff0000000000 & dst) >> 40)	| ((0x00ff00000000 & dst) >> 24);
+	header.dst[1] = ((0x0000ff000000 & dst) >> 24)	| ((0x000000ff0000 & dst) >> 8);
+	header.dst[2] = ((0x00000000ff00 & dst) >> 8)	| ((0x0000000000ff & dst) << 8);
+	header.src[0] = ((0xff0000000000 & src) >> 40)	| ((0x00ff00000000 & src) >> 24);
+	header.src[1] = ((0x0000ff000000 & src) >> 24)	| ((0x000000ff0000 & src) >> 8);
+	header.src[2] = ((0x00000000ff00 & src) >> 8)	| ((0x0000000000ff & src) << 8);
+	header.protocol = ((0xff00 & protocol) >> 8) | ((0x00ff & protocol) >> 0);
 	return header;
 }
 
@@ -200,7 +239,7 @@ static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf
 	*buf = rte_pktmbuf_alloc(mbuf_pool);
 	
 	payload_ref = &ready_payload;
-	ready_eth_header = create_eth_header();
+	ready_eth_header = create_eth_header(0x010203040506, 0x05060708090a, 0x0800);
 	eth_header_ref = &ready_eth_header;
 
 	if (buf != NULL)
@@ -222,14 +261,27 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 {
 	const uint8_t nb_ports = rte_eth_dev_count();
 	uint8_t port;
-	int total_recv = 0, total_sent = 0;
+	//int total_sent = 0;
 	int i = 0;
 	unsigned int  pkt_index = 0;
 	struct payload ready_payload;
 	clock_t curr_time, last_table_show_time, last_pkt_counter_reset;
-	unsigned int time_passed;
-	unsigned int pkts_counter, last_pkts_counter;
+	float time_passed;
+
+	unsigned int pkts_counter, pkts_counter_overall;
+	unsigned int last_pkts_counter, last_pkts_counter_overall;
+	unsigned int pkts_dropped_counter, pkts_dropped_counter_overall;
+	unsigned int last_pkts_dropped_counter, last_pkts_dropped_counter_overall;
+	unsigned int pkts_type_counter_overall[NUM_OF_TYPES];
+	unsigned int last_pkts_type_counter_overall[NUM_OF_TYPES];
 	unsigned int pkts_type_counter[NUM_OF_TYPES];
+	unsigned int last_pkts_type_counter[NUM_OF_TYPES];
+	unsigned int pkts_dropped_type_counter_overall[NUM_OF_TYPES];
+	unsigned int last_pkts_dropped_type_counter_overall[NUM_OF_TYPES];
+	unsigned int pkts_dropped_type_counter[NUM_OF_TYPES];
+	unsigned int last_pkts_dropped_type_counter[NUM_OF_TYPES];
+	float time_passed_overall;
+
 
 
 	/*
@@ -251,12 +303,26 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	srand(time(NULL));
 	last_table_show_time = 0;
 	last_pkt_counter_reset = 0;
+
 	pkts_counter = 0;
 	last_pkts_counter = 0;
+	pkts_counter_overall = 0;
+	last_pkts_counter_overall = 0;
+
+	pkts_dropped_counter = 0;
+	last_pkts_dropped_counter = 0;
+	pkts_dropped_counter_overall = 0;
+	last_pkts_dropped_counter_overall = 0;
+	
 	for (i = 0; i < NUM_OF_TYPES; i++)
 	{
 		pkts_type_counter[i] = 0;
+		pkts_dropped_type_counter[i] = 0;
+		pkts_type_counter_overall[i] = 0;
+		pkts_dropped_type_counter_overall[i] = 0;
 	}
+
+	time_passed_overall = 0;
 
 	struct rte_mbuf *bufs[BURST_SIZE];
 
@@ -272,13 +338,33 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		{
 			last_pkt_counter_reset = curr_time;
 			last_pkts_counter = pkts_counter;
+			last_pkts_dropped_counter = pkts_dropped_counter;
+			last_pkts_counter_overall = pkts_counter_overall;
+			last_pkts_dropped_counter_overall = pkts_dropped_counter_overall;
 			pkts_counter = 0;
+			pkts_dropped_counter = 0;
+			for (i = 0; i < NUM_OF_TYPES; i++)
+			{
+				last_pkts_type_counter[i] = pkts_type_counter[i];
+				last_pkts_dropped_type_counter[i] = pkts_dropped_type_counter[i];
+				last_pkts_dropped_type_counter_overall[i] = pkts_dropped_type_counter_overall[i];
+				last_pkts_type_counter_overall[i] = pkts_type_counter_overall[i];
+				pkts_type_counter[i] = 0;
+				pkts_dropped_type_counter[i] = 0;
+			}
+
 		}
 
 		time_passed = ((curr_time - last_table_show_time) * 1000) / CLOCKS_PER_SEC;
 		if (time_passed > REFRESH_TIME)
 		{
-			print(nb_rx, total_recv, nb_tx, total_sent, last_pkts_counter, pkts_type_counter);
+			time_passed_overall += time_passed;
+			print(last_pkts_counter, last_pkts_dropped_counter,
+					last_pkts_counter_overall, last_pkts_dropped_counter_overall,
+					last_pkts_type_counter, last_pkts_type_counter_overall,
+					last_pkts_dropped_type_counter, last_pkts_dropped_type_counter_overall,
+					time_passed_overall);
+
 			last_table_show_time = curr_time;
 		}
 
@@ -293,21 +379,17 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		{
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
 			pkts_type_counter[ready_payload.type] += 1;
+			pkts_type_counter_overall[ready_payload.type] += 1;
 			create_packet(&bufs[i], mbuf_pool, ready_payload);
 		}
 		nb_rx += BURST_SIZE;
-		pkt_index += BURST_SIZE;
-
-		if (pkt_index > MAX_PKT_COUNT)
-		{
-			pkt_index = 0;
-		}
+		pkt_index += nb_tx;
 		
 		// Send burst of TX packets, to second port of pair.
 		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, BURST_SIZE);
-		total_sent += nb_tx;
 		pkts_counter += nb_tx;
-
+		pkts_counter_overall += nb_tx;
+		
 		
 
 		/* Free any unsent packets. */
@@ -316,7 +398,15 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			uint16_t buf = 0;
 			for (buf = nb_tx; buf < BURST_SIZE; buf++)
 			{
-				pkts_type_counter[buf]--;
+				pkts_dropped_type_counter[buf]++;
+			}
+
+			pkts_dropped_counter += BURST_SIZE - nb_tx;
+
+			for (i = 0; i < BURST_SIZE; i++)
+			{
+				pkts_type_counter_overall[i] += pkts_type_counter[i];
+				pkts_dropped_type_counter_overall[i] += pkts_dropped_type_counter[i];
 			}
 		}
 	}
