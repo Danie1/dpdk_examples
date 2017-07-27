@@ -380,6 +380,7 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
 			pkts_type_counter[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
+			pkts_type_counter_overall[ready_payload.type] += 1;
 			create_packet(&bufs[i], mbuf_pool, ready_payload);
 		}
 		nb_rx += BURST_SIZE;
@@ -399,15 +400,11 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			for (buf = nb_tx; buf < BURST_SIZE; buf++)
 			{
 				pkts_dropped_type_counter[buf]++;
+				pkts_dropped_type_counter_overall[buf]++;
 			}
 
-			pkts_dropped_counter += BURST_SIZE - nb_tx;
-
-			for (i = 0; i < BURST_SIZE; i++)
-			{
-				pkts_type_counter_overall[i] += pkts_type_counter[i];
-				pkts_dropped_type_counter_overall[i] += pkts_dropped_type_counter[i];
-			}
+			pkts_dropped_counter += (BURST_SIZE - nb_tx);
+			pkts_dropped_counter_overall += (BURST_SIZE - nb_tx);
 		}
 	}
 }
