@@ -16,7 +16,7 @@
 
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
-#define BURST_SIZE 32
+#define BURST_SIZE 1024
 
 static struct ether_addr l2fwd_ports_eth_addr[1];
 
@@ -44,6 +44,8 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 					unsigned int total_sent, unsigned int total_dropped,
 					unsigned int pkts_type_counter[], unsigned int pkts_type_counter_overall[],
 					unsigned int pkts_dropped_type_counter[], unsigned int pkts_dropped_type_counter_overall[],
+					unsigned int pkts_creation_counter, unsigned int pkts_creation_failed_counter,
+					unsigned pkts_creation_counter_overall, unsigned int pkts_creation_failed_counter_overall,
 					float time_passed_overall)
 {
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
@@ -72,9 +74,9 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 	printf("%s%s", clr, topLeft);
 
 	printf("\n=================================================================================");
-	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t|", pkts_counted);
+	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t    \t|", pkts_counted);
 	printf("\n|Check time : %.2fs\t\t\t\t\t\t\t\t|", (double)PKT_COUNTER_RESET_TIME/1000);
-	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t|",
+	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t    \t|",
 				(pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
 	printf("\n|Running time : %.2f\t\t\t\t\t\t\t\t|", time_passed_overall/1000);
 
@@ -101,11 +103,18 @@ static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
 					total_dropped
 					);*/
 	printf("\n=================================================================================");
-	printf("\n|Total\t\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+	printf("\n|Total tx\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
 					pkts_counted,
 					pkts_dropped_counted,
 					total_sent,
 					total_dropped
+					);
+	printf("\n=================================================================================");
+	printf("\n|Total created\t|\t%u\t|\t%u\t|\t%u\t|    %u\t|",
+					pkts_creation_counter,
+					pkts_creation_failed_counter,
+					pkts_creation_counter_overall,
+					pkts_creation_failed_counter_overall
 					);
 	printf("\n=================================================================================\n");
 }
@@ -216,13 +225,13 @@ static struct eth_header create_eth_header(uint64_t src, uint64_t dst, uint16_t 
 		header.dst[byte_index] = (dst & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 		header.src[byte_index] = (src & (0x11111111 << (byte_index * 2))) >> (byte_index * 2);
 	}*/
-	header.dst[0] = ((0xff0000000000 & dst) >> 40)	| ((0x00ff00000000 & dst) >> 24);
-	header.dst[1] = ((0x0000ff000000 & dst) >> 24)	| ((0x000000ff0000 & dst) >> 8);
-	header.dst[2] = ((0x00000000ff00 & dst) >> 8)	| ((0x0000000000ff & dst) << 8);
-	header.src[0] = ((0xff0000000000 & src) >> 40)	| ((0x00ff00000000 & src) >> 24);
-	header.src[1] = ((0x0000ff000000 & src) >> 24)	| ((0x000000ff0000 & src) >> 8);
-	header.src[2] = ((0x00000000ff00 & src) >> 8)	| ((0x0000000000ff & src) << 8);
-	header.protocol = ((0xff00 & protocol) >> 8) | ((0x00ff & protocol) >> 0);
+	header.dst[0] = 	((0xff0000000000 & dst) >> 40)	| ((0x00ff00000000 & dst) >> 24);
+	header.dst[1] = 	((0x0000ff000000 & dst) >> 24)	| ((0x000000ff0000 & dst) >> 8);
+	header.dst[2] = 	((0x00000000ff00 & dst) >> 8)	| ((0x0000000000ff & dst) << 8);
+	header.src[0] = 	((0xff0000000000 & src) >> 40)	| ((0x00ff00000000 & src) >> 24);
+	header.src[1] = 	((0x0000ff000000 & src) >> 24)	| ((0x000000ff0000 & src) >> 8);
+	header.src[2] = 	((0x00000000ff00 & src) >> 8)	| ((0x0000000000ff & src) << 8);
+	header.protocol = 	((0xff00 & protocol) >> 8)		| ((0x00ff & protocol) >> 0);
 	return header;
 }
 
@@ -232,7 +241,7 @@ static struct eth_header create_eth_header(uint64_t src, uint64_t dst, uint16_t 
 * ready_eth_header - the eth header of the packet
 * ready_payload - the payload of the packet
 */
-static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_pool, struct payload ready_payload)
+static inline int create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_pool, struct payload ready_payload)
 {
 	struct payload* payload_ref;
 	void* payload_loc;
@@ -246,14 +255,16 @@ static inline void create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf
 	ready_eth_header = create_eth_header(0x010203040506, 0x05060708090a, 0x0800);
 	eth_header_ref = &ready_eth_header;
 
-	if (buf != NULL)
+	if (*buf == NULL)
 	{
-		eth_header_loc = rte_pktmbuf_append(*buf, sizeof(struct eth_header));
-		payload_loc = rte_pktmbuf_append(*buf, sizeof(struct payload));
+		return 0;
 	}
 
-	rte_memcpy(eth_header_loc, eth_header_ref , 14);
+	eth_header_loc = rte_pktmbuf_append(*buf, sizeof(struct eth_header));
+	payload_loc = rte_pktmbuf_append(*buf, sizeof(struct payload));
+	rte_memcpy(eth_header_loc, eth_header_ref , sizeof(struct eth_header));
 	rte_memcpy(payload_loc, payload_ref, sizeof(struct payload));
+	return 1;
 }
 
 
@@ -284,6 +295,13 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	unsigned int last_pkts_dropped_type_counter_overall[NUM_OF_TYPES];
 	unsigned int pkts_dropped_type_counter[NUM_OF_TYPES];
 	unsigned int last_pkts_dropped_type_counter[NUM_OF_TYPES];
+
+	unsigned int pkts_creation_counter, pkts_creation_counter_overall;
+	unsigned int pkts_creation_failed_counter, pkts_creation_failed_counter_overall;
+	unsigned int last_pkts_creation_counter, last_pkts_creation_counter_overall;
+	unsigned int last_pkts_creation_failed_counter, last_pkts_creation_failed_counter_overall;
+	
+	
 	float time_passed_overall;
 
 
@@ -326,6 +344,16 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		pkts_dropped_type_counter_overall[i] = 0;
 	}
 
+	pkts_creation_counter = 0;
+	pkts_creation_counter_overall = 0;
+	pkts_creation_failed_counter = 0;
+	pkts_creation_failed_counter_overall = 0;
+	last_pkts_creation_counter = 0;
+	last_pkts_creation_counter_overall = 0;
+	last_pkts_creation_failed_counter = 0;
+	last_pkts_creation_failed_counter_overall = 0;
+
+
 	time_passed_overall = 0;
 
 	struct rte_mbuf *bufs[BURST_SIZE];
@@ -336,6 +364,7 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		curr_time = clock();
 		uint16_t nb_tx = 0;
 		uint16_t nb_rx = 0;
+		uint16_t nb_created = 0;
 		
 		time_passed = ((curr_time - last_pkt_counter_reset) * 1000) / CLOCKS_PER_SEC;
 		if (time_passed > PKT_COUNTER_RESET_TIME)
@@ -345,8 +374,16 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			last_pkts_dropped_counter = pkts_dropped_counter;
 			last_pkts_counter_overall = pkts_counter_overall;
 			last_pkts_dropped_counter_overall = pkts_dropped_counter_overall;
+			last_pkts_creation_counter = pkts_creation_counter;
+			last_pkts_creation_counter_overall = pkts_creation_counter_overall;
+			last_pkts_creation_failed_counter = pkts_creation_failed_counter;
+			last_pkts_creation_failed_counter_overall = pkts_creation_failed_counter_overall;			
+
 			pkts_counter = 0;
 			pkts_dropped_counter = 0;
+			pkts_creation_counter = 0;
+			pkts_creation_failed_counter = 0;
+
 			for (i = 0; i < NUM_OF_TYPES; i++)
 			{
 				last_pkts_type_counter[i] = pkts_type_counter[i];
@@ -367,6 +404,8 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 					last_pkts_counter_overall, last_pkts_dropped_counter_overall,
 					last_pkts_type_counter, last_pkts_type_counter_overall,
 					last_pkts_dropped_type_counter, last_pkts_dropped_type_counter_overall,
+					last_pkts_creation_counter, last_pkts_creation_failed_counter,
+					last_pkts_creation_counter_overall, last_pkts_creation_failed_counter_overall,
 					time_passed_overall);
 
 			last_table_show_time = curr_time;
@@ -377,21 +416,31 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			continue;
 		}
 
+		//TODO free buf_addr if needed
 		memset(bufs, 0x0, BURST_SIZE * sizeof(struct rte_mbuf *));
 
 		for (i = 0; i < BURST_SIZE; i++)
 		{
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
+			if(create_packet(&bufs[i], mbuf_pool, ready_payload) == 0)
+			{
+				continue;
+			}
+			
+			nb_created += 1;
 			pkts_type_counter[ready_payload.type] += 1;
 			pkts_type_counter_overall[ready_payload.type] += 1;
-			pkts_type_counter_overall[ready_payload.type] += 1;
-			create_packet(&bufs[i], mbuf_pool, ready_payload);
 		}
+		pkts_creation_counter += nb_created;
+		pkts_creation_counter_overall += nb_created;
+		pkts_creation_failed_counter += (BURST_SIZE - nb_created);
+		pkts_creation_failed_counter_overall += (BURST_SIZE - nb_created);
+
 		nb_rx += BURST_SIZE;
 		pkt_index += nb_tx;
 		
 		// Send burst of TX packets, to second port of pair.
-		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, BURST_SIZE);
+		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, nb_created);
 		pkts_counter += nb_tx;
 		pkts_counter_overall += nb_tx;
 		
@@ -400,20 +449,24 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 		/* Free any unsent packets. */
 		if (unlikely(nb_tx < BURST_SIZE))
 		{
-			// uint16_t buf = 0;
-			// unsigned int type = 0;
-			// unsigned int data_off = 0;
-			// for (buf = nb_tx; buf < BURST_SIZE; buf++)
-			// {
-			// 	data_off = bufs[buf]->data_off;
-			// 	type = ((struct payload*)(bufs[buf]->buf_addr + data_off))->type;
-			// 	printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
-			// 	// pkts_dropped_type_counter[bufs[buf]]++;
-			// 	// pkts_dropped_type_counter_overall[buf]++;
-			// }
+			uint16_t buf = 0;
+			unsigned int type = 0;
+			unsigned int data_off = 0;
+			for (buf = nb_tx; buf < BURST_SIZE; buf++)
+			{
+				if(bufs[buf] == NULL)
+				{
+					continue;
+				}
+				data_off = bufs[buf]->data_off;
+				type = ((struct payload*)(bufs[buf]->buf_addr + data_off + sizeof(struct eth_header)))->type;
+				//printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
+				pkts_dropped_type_counter[type]++;
+				pkts_dropped_type_counter_overall[type]++;
+			}
 
-			pkts_dropped_counter += (BURST_SIZE - nb_tx);
-			pkts_dropped_counter_overall += (BURST_SIZE - nb_tx);
+			pkts_dropped_counter += (nb_created - nb_tx);
+			pkts_dropped_counter_overall += (nb_created - nb_tx);
 		}
 	}
 }
