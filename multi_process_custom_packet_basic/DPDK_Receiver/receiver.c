@@ -6,33 +6,25 @@
 #include <rte_lcore.h>
 #include <rte_mbuf.h>
 #include <rte_errno.h>
+#include <definitions.h>
 
-#define PORT 1
-
-#define RX_RING_SIZE 128
+#define RX_RING_SIZE (128 * 30)
 #define TX_RING_SIZE 512
 
 #define NUM_MBUFS 8191
-#define MBUF_CACHE_SIZE 250
-#define BURST_SIZE 32
+#define MBUF_CACHE_SIZE 350
+#define BURST_SIZE (1300)
+#define REFRESH_TIME (500) //in ms
 
 static const struct rte_eth_conf port_conf_default = {
 	.rxmode = { .max_rx_pkt_len = ETHER_MAX_LEN }
 };
 
-struct eth_header
-{
-    char dst[6];
-    char src[6];
-    char protocol[2];
-};
+void ParsePacket(struct rte_mbuf* buf);
+void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx);
+void Init(void);
 
-struct payload
-{
-    int type;
-    int index;
-    char msg[100];
-};
+struct ports_statistics stats;
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
 static void print(int received, int total)
@@ -48,6 +40,33 @@ static void print(int received, int total)
 	printf("\nAggregate statistics ===============================");
 	printf("\nTotal packets received: %d", total);
 	printf("\n====================================================\n");
+}
+
+/* basicfwd.c: Basic DPDK skeleton forwarding example. */
+static void PrintStatistics(void)
+{
+	const char clr[] = { 27, '[', '2', 'J', '\0' };
+	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
+	uint32_t sum_received = 0;
+
+	/* Clear screen and move to top left */
+	printf("%s%s", clr, topLeft);
+
+	int i = 0;
+
+	printf("====================================================\n");
+	printf("%-14s | %9s | %9s | %9s |\n", "Type #", "Current", "Total", "Dropped");
+	printf("====================================================\n");
+
+	for (i = 0; i < NUM_OF_MSG_TYPES; i++)
+	{
+		printf("Type #%-8d | %9d | %9d | %9d |\n", i, stats.current[i].value, stats.total[i].value, stats.dropped[i].value);
+		sum_received += stats.total[i].value;
+	}
+
+	printf("====================================================\n");
+	printf("Total packets received: %d\n", sum_received);
+	printf("====================================================\n");
 }
 
 /*
@@ -110,6 +129,43 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	return 0;
 }
 
+void Init(void)
+{
+	int i = 0;
+
+	for (i = 0; i < NUM_OF_MSG_TYPES; i++)
+	{
+		stats.total[i].value = 0;
+		stats.dropped[i].value = 0;
+		stats.current[i].value = 0;
+	}	
+}
+
+void ParsePacket(struct rte_mbuf* buf)
+{
+	struct payload p = *(struct payload*)((char*)buf->buf_addr + 128 + 14);
+	
+	// Validate msg index
+	if (p.type > NUM_OF_MSG_TYPES)
+	{
+		stats.dropped[p.index].value += 1;
+		return;
+	}
+
+	stats.current[p.type].value += 1;
+	stats.total[p.type].value +=  1;
+}
+
+void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx)
+{
+	int i = 0;
+	
+	for (i = 0; i < nb_rx; i++)
+	{
+		ParsePacket(bufs[i]);
+	}
+}
+
 /*
  * The lcore main. This is the main thread that does the work, reading from
  * an input port and writing to an output port.
@@ -117,20 +173,21 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 static __attribute__((noreturn)) void
 lcore_main(void)
 {
-	int tmp_index = 0;
-	uint32_t total = 0;
+	//uint32_t total = 0;
+	clock_t curr_time, last_time;
+	unsigned int time_passed;
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
 	 * for best performance.
 	 */
 	
-	if (rte_eth_dev_socket_id(PORT) > 0 &&
-			rte_eth_dev_socket_id(PORT) !=
+	if (rte_eth_dev_socket_id(PORT_RECV) > 0 &&
+			rte_eth_dev_socket_id(PORT_RECV) !=
 					(int)rte_socket_id())
 		printf("WARNING, port %u is on remote NUMA node to "
 				"polling thread.\n\tPerformance will "
-				"not be optimal.\n", PORT);
+				"not be optimal.\n", PORT_RECV);
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 			rte_lcore_id());
@@ -138,18 +195,22 @@ lcore_main(void)
 	/* Run until the application is quit or killed. */
 	for (;;) {
 		/* Get burst of RX packets, from first port of pair. */
+		curr_time = clock();
+		time_passed = ((curr_time - last_time) * 1000) / CLOCKS_PER_SEC;
+
+		/* Get burst of RX packets, from first port of pair. */
 		struct rte_mbuf *bufs[BURST_SIZE];
-		const uint16_t nb_rx = rte_eth_rx_burst(PORT, 0,
-				bufs, BURST_SIZE);
+		const uint16_t nb_rx = rte_eth_rx_burst(PORT_RECV, 0, bufs, BURST_SIZE);
 
-		total += nb_rx;
+		HandleBurst(bufs, nb_rx);
 
-		if (nb_rx > 0)
+		//total += nb_rx;
+
+		if ((time_passed > REFRESH_TIME) && nb_rx > 0)
 		{
-			print(nb_rx, total);
-		}	
-
-		tmp_index++;
+			PrintStatistics();
+			last_time = curr_time;
+		}
 
 		if (unlikely(nb_rx == 0))
 			continue;
@@ -179,11 +240,13 @@ main(int argc, char *argv[])
 	argc -= ret;
 	argv += ret;
 
+	Init();
+
 	printf("SocketID: %d, CoreID: %d\n", rte_socket_id(), rte_lcore_id());
 	
 	
 	// Creates a new mempool in memory to hold the mbufs. 
-	mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL_RECV", NUM_MBUFS * 1,
+	mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL_RECV", NUM_MBUFS * 3,
 		MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
 
 	if (mbuf_pool == NULL)
@@ -193,8 +256,8 @@ main(int argc, char *argv[])
 	}
 
 	// Initialize all ports.
-	if (port_init(PORT, mbuf_pool) != 0)
-		rte_exit(EXIT_FAILURE, "Cannot init port %d\n", PORT);
+	if (port_init(PORT_RECV, mbuf_pool) != 0)
+		rte_exit(EXIT_FAILURE, "Cannot init port %d\n", PORT_RECV);
  
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");

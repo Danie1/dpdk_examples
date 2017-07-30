@@ -44,7 +44,10 @@ APP = receiver
 # all source are stored in SRCS-y
 SRCS-y := receiver.c
 
+INC := $(wildcard *.h)
+
 CFLAGS += $(WERROR_FLAGS)
+CFLAGS += -I$(SRCDIR)/../shared
 
 # workaround for a gcc bug with noreturn attribute
 # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=12603
