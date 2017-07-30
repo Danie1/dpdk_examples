@@ -416,6 +416,7 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			continue;
 		}
 
+		//TODO free buf_addr if needed
 		memset(bufs, 0x0, BURST_SIZE * sizeof(struct rte_mbuf *));
 
 		for (i = 0; i < BURST_SIZE; i++)
