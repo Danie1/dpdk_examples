@@ -36,4 +36,17 @@ struct ports_statistics
 	struct port_info total[NUM_OF_MSG_TYPES];
 	struct port_info dropped[NUM_OF_MSG_TYPES];
 	struct port_info current[NUM_OF_MSG_TYPES];
+    struct port_info currentDropped[NUM_OF_MSG_TYPES];
 } ports_statistics;
+
+/***********************************************
+* Enumerations
+************************************************/
+enum ETitles
+{
+    eTitles_currentPassed,
+    eTitles_currentDropped,
+    eTitles_overallPassed,
+    eTitles_overallDropped,
+    NUM_OF_TITLES
+} ETitles;
