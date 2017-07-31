@@ -8,15 +8,14 @@
 #include <rte_errno.h>
 #include <time.h>
 #include <stdlib.h>
-
-#define PORT_SEND 0
+#include <definitions.h>
 
 #define RX_RING_SIZE 128
 #define TX_RING_SIZE 512
 
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
-#define BURST_SIZE 1024
+#define BURST_SIZE 4096
 
 static struct ether_addr l2fwd_ports_eth_addr[1];
 
@@ -26,95 +25,101 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (50) //in ms
-#define PKT_COUNTER_RESET_TIME (50) //in ms
+#define REFRESH_TIME (1000) //in ms
 #define NUM_OF_TYPES (16)
 #define PACKET_LIMIT (1000000000)
 
 
+struct ports_statistics tx_stats;
+struct ports_statistics creation_stats;
 
-
-
-
-
+static float time_passed_overall;
 
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
-static void print(	unsigned int pkts_counted, unsigned int pkts_dropped_counted,
-					unsigned int total_sent, unsigned int total_dropped,
-					unsigned int pkts_type_counter[], unsigned int pkts_type_counter_overall[],
-					unsigned int pkts_dropped_type_counter[], unsigned int pkts_dropped_type_counter_overall[],
-					unsigned int pkts_creation_counter, unsigned int pkts_creation_failed_counter,
-					unsigned pkts_creation_counter_overall, unsigned int pkts_creation_failed_counter_overall,
-					float time_passed_overall)
+static void print(void)
 {
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
 	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
 	unsigned int type_index;
-	unsigned int total_by_types[4];
+	unsigned int totalTx[4/*ETitles.NUM_OF_TITLES*/];
+	unsigned int totalCreation[4/*ETitles.NUM_OF_TITLES*/];
 
 	for (type_index = 0; type_index < NUM_OF_TYPES; type_index++)
 	{
 		//Puts zeroes before first use
 		if (type_index == 0)
 		{
-			total_by_types[0] = 0;
-			total_by_types[1] = 0;
-			total_by_types[2] = 0;
-			total_by_types[3] = 0;
+			totalTx[eTitles_currentPassed] = 0;
+			totalTx[eTitles_currentDropped] = 0;
+			totalTx[eTitles_overallPassed] = 0;
+			totalTx[eTitles_overallDropped] = 0;
+
+			totalCreation[eTitles_currentPassed] = 0;
+			totalCreation[eTitles_currentDropped] = 0;
+			totalCreation[eTitles_overallPassed] = 0;
+			totalCreation[eTitles_overallDropped] = 0;
 		}
 
-		total_by_types[0] += pkts_type_counter[type_index];
-		total_by_types[1] += pkts_dropped_type_counter[type_index];
-		total_by_types[2] += pkts_type_counter_overall[type_index];
-		total_by_types[3] += pkts_dropped_type_counter_overall[type_index];
+		totalTx[eTitles_currentPassed] += tx_stats.current[type_index].value;
+		totalTx[eTitles_currentDropped] += tx_stats.currentDropped[type_index].value;
+		totalTx[eTitles_overallPassed] += tx_stats.total[type_index].value;
+		totalTx[eTitles_overallDropped] += tx_stats.dropped[type_index].value;
+
+		totalCreation[eTitles_currentPassed] += creation_stats.current[type_index].value;
+		totalCreation[eTitles_currentDropped] += creation_stats.currentDropped[type_index].value;
+		totalCreation[eTitles_overallPassed] += creation_stats.total[type_index].value;
+		totalCreation[eTitles_overallDropped] += creation_stats.dropped[type_index].value;
 	}
 
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
 
 	printf("\n=================================================================================");
-	printf("\n|Pkts counted since last check : %d pkts\t\t\t\t\t    \t|", pkts_counted);
-	printf("\n|Check time : %.2fs\t\t\t\t\t\t\t\t|", (double)PKT_COUNTER_RESET_TIME/1000);
-	printf("\n|Pkts/s since last check : %d pkts/s    \t\t\t\t\t    \t|",
-				(pkts_counted * 1000) / PKT_COUNTER_RESET_TIME);
+	printf("\n|Pkts counted since last check : %d %-41s|", totalTx[eTitles_currentPassed], "pkts");
+	printf("\n|Check time : %.2f%-62s|", (double)REFRESH_TIME/1000, "s");
+	printf("\n|Pkts/s since last check : %d %-47s|",
+				(totalTx[eTitles_currentPassed] * 1000) / REFRESH_TIME, "pkts/s");
 	printf("\n|Running time : %.2f\t\t\t\t\t\t\t\t|", time_passed_overall/1000);
 
 	printf("\n=================================================================================");
-	printf("\n|               |\t current session\t|\t     overall\t\t|");
-	printf("\n|    Type #     =================================================================");
-	printf("\n|      \t\t|  pkts sent\t|  pkts dropped\t|  pkts sent\t|  pkts dropped\t|");
+	printf("\n|%-15s|%23s%-8s|%19s%-12s|", "", "current session", "", "overall", "");
+	printf("\n|%-15s=================================================================", "Type #");
+	printf("\n|%-15s|%15s|%15s|%15s|%15s|", "", "pkts sent", "pkts dropped", "pkts sent", "pkts dropped");
 	printf("\n=================================================================================");
 	for (type_index = 0; type_index < NUM_OF_TYPES; type_index++)
 	{
-		printf("\n|Type #%u\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
+		printf("\n|%s%-9u|%15u|%15u|%15u|%15u|",
+					"Type #",
 					type_index,
-					pkts_type_counter[type_index],
-					pkts_dropped_type_counter[type_index],
-					pkts_type_counter_overall[type_index],
-					pkts_dropped_type_counter_overall[type_index]
+					tx_stats.current[type_index].value,
+					tx_stats.currentDropped[type_index].value,
+					tx_stats.total[type_index].value,
+					tx_stats.dropped[type_index].value
 					);
 	}
 	/*printf("\n=================================================================================");
 	printf("\n|  Total by types\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
-					pkts_counted,
+					totalTx[eTitles_currentPassed],
 					pkts_dropped_counted,
 					total_sent,
 					total_dropped
 					);*/
 	printf("\n=================================================================================");
-	printf("\n|Total tx\t|\t%u\t|\t%u\t|\t%u\t|\t%u\t|",
-					pkts_counted,
-					pkts_dropped_counted,
-					total_sent,
-					total_dropped
+	printf("\n|%-15s|%15u|%15u|%15u|%15u|",
+					"Total tx",
+					totalTx[eTitles_currentPassed],
+					totalTx[eTitles_currentDropped],
+					totalTx[eTitles_overallPassed],
+					totalTx[eTitles_overallDropped]
 					);
 	printf("\n=================================================================================");
-	printf("\n|Total created\t|\t%u\t|\t%u\t|\t%u\t|    %u\t|",
-					pkts_creation_counter,
-					pkts_creation_failed_counter,
-					pkts_creation_counter_overall,
-					pkts_creation_failed_counter_overall
+	printf("\n|%-15s|%15u|%15u|%15u|%15u|",
+					"Total created",
+					totalCreation[eTitles_currentPassed],
+					totalCreation[eTitles_currentDropped],
+					totalCreation[eTitles_overallPassed],
+					totalCreation[eTitles_overallDropped]
 					);
 	printf("\n=================================================================================\n");
 }
@@ -180,22 +185,6 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 
 	return 0;
 }
-
- 
-struct payload
-{
-    int type;
-    int index;
-    char msg[100];
-};
- 
-struct eth_header
-{
-    unsigned short int dst[3];
-    unsigned short int src[3];
-    unsigned short int protocol;
-};
-
 
 
 
@@ -278,33 +267,10 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	uint8_t port;
 	//int total_sent = 0;
 	int i = 0;
-	unsigned int  pkt_index = 0;
+	unsigned int  pkt_index = 0, pkts_counter = 0;
 	struct payload ready_payload;
-	clock_t curr_time, last_table_show_time, last_pkt_counter_reset;
+	clock_t curr_time, last_pkt_counter_reset;
 	float time_passed;
-
-	unsigned int pkts_counter, pkts_counter_overall;
-	unsigned int last_pkts_counter, last_pkts_counter_overall;
-	unsigned int pkts_dropped_counter, pkts_dropped_counter_overall;
-	unsigned int last_pkts_dropped_counter, last_pkts_dropped_counter_overall;
-	unsigned int pkts_type_counter_overall[NUM_OF_TYPES];
-	unsigned int last_pkts_type_counter_overall[NUM_OF_TYPES];
-	unsigned int pkts_type_counter[NUM_OF_TYPES];
-	unsigned int last_pkts_type_counter[NUM_OF_TYPES];
-	unsigned int pkts_dropped_type_counter_overall[NUM_OF_TYPES];
-	unsigned int last_pkts_dropped_type_counter_overall[NUM_OF_TYPES];
-	unsigned int pkts_dropped_type_counter[NUM_OF_TYPES];
-	unsigned int last_pkts_dropped_type_counter[NUM_OF_TYPES];
-
-	unsigned int pkts_creation_counter, pkts_creation_counter_overall;
-	unsigned int pkts_creation_failed_counter, pkts_creation_failed_counter_overall;
-	unsigned int last_pkts_creation_counter, last_pkts_creation_counter_overall;
-	unsigned int last_pkts_creation_failed_counter, last_pkts_creation_failed_counter_overall;
-	
-	
-	float time_passed_overall;
-
-
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -323,36 +289,21 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 
 
 	srand(time(NULL));
-	last_table_show_time = 0;
 	last_pkt_counter_reset = 0;
-
-	pkts_counter = 0;
-	last_pkts_counter = 0;
-	pkts_counter_overall = 0;
-	last_pkts_counter_overall = 0;
-
-	pkts_dropped_counter = 0;
-	last_pkts_dropped_counter = 0;
-	pkts_dropped_counter_overall = 0;
-	last_pkts_dropped_counter_overall = 0;
 	
 	for (i = 0; i < NUM_OF_TYPES; i++)
 	{
-		pkts_type_counter[i] = 0;
-		pkts_dropped_type_counter[i] = 0;
-		pkts_type_counter_overall[i] = 0;
-		pkts_dropped_type_counter_overall[i] = 0;
+		tx_stats.current[i].value = 0;
+		tx_stats.currentDropped[i].value = 0;
+		tx_stats.total[i].value = 0;
+		tx_stats.dropped[i].value = 0;
+
+
+		creation_stats.current[i].value = 0;
+		creation_stats.currentDropped[i].value = 0;
+		creation_stats.total[i].value = 0;
+		creation_stats.dropped[i].value = 0;
 	}
-
-	pkts_creation_counter = 0;
-	pkts_creation_counter_overall = 0;
-	pkts_creation_failed_counter = 0;
-	pkts_creation_failed_counter_overall = 0;
-	last_pkts_creation_counter = 0;
-	last_pkts_creation_counter_overall = 0;
-	last_pkts_creation_failed_counter = 0;
-	last_pkts_creation_failed_counter_overall = 0;
-
 
 	time_passed_overall = 0;
 
@@ -362,53 +313,28 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	for (;;) {
 		/* Get burst of RX packets, from first port of pair. */
 		curr_time = clock();
+
 		uint16_t nb_tx = 0;
-		uint16_t nb_rx = 0;
 		uint16_t nb_created = 0;
 		
 		time_passed = ((curr_time - last_pkt_counter_reset) * 1000) / CLOCKS_PER_SEC;
-		if (time_passed > PKT_COUNTER_RESET_TIME)
+		if (time_passed > REFRESH_TIME)
 		{
-			last_pkt_counter_reset = curr_time;
-			last_pkts_counter = pkts_counter;
-			last_pkts_dropped_counter = pkts_dropped_counter;
-			last_pkts_counter_overall = pkts_counter_overall;
-			last_pkts_dropped_counter_overall = pkts_dropped_counter_overall;
-			last_pkts_creation_counter = pkts_creation_counter;
-			last_pkts_creation_counter_overall = pkts_creation_counter_overall;
-			last_pkts_creation_failed_counter = pkts_creation_failed_counter;
-			last_pkts_creation_failed_counter_overall = pkts_creation_failed_counter_overall;			
-
-			pkts_counter = 0;
-			pkts_dropped_counter = 0;
-			pkts_creation_counter = 0;
-			pkts_creation_failed_counter = 0;
+			
+			time_passed_overall += time_passed;
+			print();
 
 			for (i = 0; i < NUM_OF_TYPES; i++)
 			{
-				last_pkts_type_counter[i] = pkts_type_counter[i];
-				last_pkts_dropped_type_counter[i] = pkts_dropped_type_counter[i];
-				last_pkts_dropped_type_counter_overall[i] = pkts_dropped_type_counter_overall[i];
-				last_pkts_type_counter_overall[i] = pkts_type_counter_overall[i];
-				pkts_type_counter[i] = 0;
-				pkts_dropped_type_counter[i] = 0;
+				tx_stats.current[i].value = 0;
+				tx_stats.currentDropped[i].value = 0;
+
+				creation_stats.current[i].value = 0;
+				creation_stats.currentDropped[i].value = 0;
 			}
 
-		}
-
-		time_passed = ((curr_time - last_table_show_time) * 1000) / CLOCKS_PER_SEC;
-		if (time_passed > REFRESH_TIME)
-		{
-			time_passed_overall += time_passed;
-			print(last_pkts_counter, last_pkts_dropped_counter,
-					last_pkts_counter_overall, last_pkts_dropped_counter_overall,
-					last_pkts_type_counter, last_pkts_type_counter_overall,
-					last_pkts_dropped_type_counter, last_pkts_dropped_type_counter_overall,
-					last_pkts_creation_counter, last_pkts_creation_failed_counter,
-					last_pkts_creation_counter_overall, last_pkts_creation_failed_counter_overall,
-					time_passed_overall);
-
-			last_table_show_time = curr_time;
+			pkts_counter = 0;
+			last_pkt_counter_reset = curr_time;
 		}
 
 		if (pkts_counter > PACKET_LIMIT)
@@ -424,27 +350,27 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 			ready_payload = create_payload(GET_RANDOM_BETWEEN(0, NUM_OF_TYPES), pkt_index + i, "Read Me\n\0", 9);
 			if(create_packet(&bufs[i], mbuf_pool, ready_payload) == 0)
 			{
+				printf("faileed to create\n");
+				creation_stats.currentDropped[ready_payload.type].value += 1;
+				creation_stats.dropped[ready_payload.type].value += 1;
 				continue;
 			}
 			
 			nb_created += 1;
-			pkts_type_counter[ready_payload.type] += 1;
-			pkts_type_counter_overall[ready_payload.type] += 1;
-		}
-		pkts_creation_counter += nb_created;
-		pkts_creation_counter_overall += nb_created;
-		pkts_creation_failed_counter += (BURST_SIZE - nb_created);
-		pkts_creation_failed_counter_overall += (BURST_SIZE - nb_created);
+			creation_stats.current[ready_payload.type].value += 1;
+			creation_stats.total[ready_payload.type].value += 1;
 
-		nb_rx += BURST_SIZE;
-		pkt_index += nb_tx;
+			//Assumes everything was sent, and then subtracts by the number of the dropped packets
+			tx_stats.current[ready_payload.type].value += 1;
+			tx_stats.total[ready_payload.type].value += 1;
+		}
+
 		
 		// Send burst of TX packets, to second port of pair.
 		nb_tx += rte_eth_tx_burst(PORT_SEND, 0,	bufs, nb_created);
+
+		pkt_index += nb_tx;
 		pkts_counter += nb_tx;
-		pkts_counter_overall += nb_tx;
-		
-		
 
 		/* Free any unsent packets. */
 		if (unlikely(nb_tx < BURST_SIZE))
@@ -461,12 +387,15 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 				data_off = bufs[buf]->data_off;
 				type = ((struct payload*)(bufs[buf]->buf_addr + data_off + sizeof(struct eth_header)))->type;
 				//printf("start = %u, type = %u, index = %u\n", nb_tx, type, buf);
-				pkts_dropped_type_counter[type]++;
-				pkts_dropped_type_counter_overall[type]++;
-			}
+				tx_stats.currentDropped[type].value += 1;
+				tx_stats.dropped[type].value += 1;
 
-			pkts_dropped_counter += (nb_created - nb_tx);
-			pkts_dropped_counter_overall += (nb_created - nb_tx);
+				//subtracts the dropped ones after assumed everything was sent
+				tx_stats.current[type].value -= 1;
+				tx_stats.total[type].value -= 1;
+
+				rte_pktmbuf_free(bufs[buf]);
+			}
 		}
 	}
 }
