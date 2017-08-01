@@ -489,7 +489,7 @@ main(int argc, char *argv[])
 
 
 	/* Call lcore_main on the master core only. */
-	//lcore_main(mbuf_pool1);
+	lcore_main(mbuf_pool1);
 
 	return 0;
 }
