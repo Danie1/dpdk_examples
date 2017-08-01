@@ -408,8 +408,7 @@ static void lcore_printer1(void* arg)
 	{
 		printf("1.lcore_id = %d\n", lcore_id);
 		//sleep(1);
-	} while(0);
-	while(1) {}
+	} while(1);
 }
 static void lcore_printer2(void* arg)
 {
@@ -431,7 +430,7 @@ main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool1;
 	//struct rte_mempool *mbuf_pool2;
-	unsigned lcore_id1 = 1, lcore_id2 = 2;
+	unsigned lcore_id1, lcore_id2;
 	int val;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
@@ -462,12 +461,11 @@ main(int argc, char *argv[])
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
 
 
-	RTE_LCORE_FOREACH_SLAVE(lcore_id1)
+	/*RTE_LCORE_FOREACH_SLAVE(lcore_id1)
 	{
 		val = rte_eal_remote_launch(lcore_printer1, NULL, lcore_id1);
-	}
+	}*/
 
-	lcore_printer2(NULL);
 	//printf("here after 1 - %d\n", val);
 	/*RTE_LCORE_FOREACH_SLAVE(lcore_id2)
 	{
@@ -477,7 +475,7 @@ main(int argc, char *argv[])
 
 
 	/* Call lcore_main on the master core only. */
-	//lcore_main(mbuf_pool1);
+	lcore_main(mbuf_pool1);
 
 	return 0;
 }
