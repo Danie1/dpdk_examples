@@ -404,18 +404,32 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 static void lcore_printer1(void* arg)
 {
 	unsigned lcore_id = rte_lcore_id();
+	unsigned int index = 0;
 	do
 	{
-		printf("1.lcore_id = %d\n", lcore_id);
+		printf("1.lcore_id = %d index = %u\n", lcore_id, index);
+		index++;
+		if (lcore_id != 1)
+		{
+			printf("lcore_id != %d\n", lcore_id);
+			break;
+		}
 		//sleep(1);
 	} while(1);
 }
 static void lcore_printer2(void* arg)
 {
 	unsigned lcore_id = rte_lcore_id();
+	unsigned int index = 0;
 	do
 	{
-		printf("2.lcore_id = %d\n", lcore_id);
+		printf("2.lcore_id = %d index = %u\n", lcore_id, index);
+		index++;
+		if (lcore_id != 0)
+		{
+			printf("lcore_id != %d\n", lcore_id);
+			break;
+		}
 		//sleep(1);
 	} while(1);
 }
@@ -464,8 +478,8 @@ main(int argc, char *argv[])
 	/*RTE_LCORE_FOREACH_SLAVE(lcore_id1)
 	{
 		val = rte_eal_remote_launch(lcore_printer1, NULL, lcore_id1);
-	}*/
-
+	}
+	lcore_printer2(NULL);*/
 	//printf("here after 1 - %d\n", val);
 	/*RTE_LCORE_FOREACH_SLAVE(lcore_id2)
 	{
@@ -475,7 +489,7 @@ main(int argc, char *argv[])
 
 
 	/* Call lcore_main on the master core only. */
-	lcore_main(mbuf_pool1);
+	//lcore_main(mbuf_pool1);
 
 	return 0;
 }
