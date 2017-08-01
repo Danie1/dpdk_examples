@@ -25,7 +25,7 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (1000) //in ms
+#define REFRESH_TIME (10000) //in ms
 #define NUM_OF_TYPES (16)
 #define PACKET_LIMIT (1000000000)
 
@@ -400,6 +400,27 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 	}
 }
 
+
+static void lcore_printer1(void* arg)
+{
+	unsigned lcore_id = rte_lcore_id();
+	do
+	{
+		printf("1.lcore_id = %d\n", lcore_id);
+		//sleep(1);
+	} while(1);
+}
+static void lcore_printer2(void* arg)
+{
+	unsigned lcore_id = rte_lcore_id();
+	do
+	{
+		printf("2.lcore_id = %d\n", lcore_id);
+		//sleep(1);
+	} while(1);
+}
+
+
 /*
  * The main function, which does initialization and calls the per-lcore
  * functions.
@@ -409,6 +430,8 @@ main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool1;
 	//struct rte_mempool *mbuf_pool2;
+	unsigned lcore_id1, lcore_id2;
+	int val;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
 	int ret = rte_eal_init(argc, argv);
@@ -436,6 +459,20 @@ main(int argc, char *argv[])
  
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
+
+
+	/*RTE_LCORE_FOREACH_SLAVE(lcore_id1)
+	{
+		val = rte_eal_remote_launch(lcore_printer1, NULL, lcore_id1);
+	}*/
+
+	//printf("here after 1 - %d\n", val);
+	/*RTE_LCORE_FOREACH_SLAVE(lcore_id2)
+	{
+		val = rte_eal_remote_launch(lcore_printer2, NULL, lcore_id2);
+	}*/
+	//printf("here after 2 - %d\n", val);
+
 
 	/* Call lcore_main on the master core only. */
 	lcore_main(mbuf_pool1);
