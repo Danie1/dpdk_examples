@@ -35,7 +35,7 @@ struct ports_statistics
 {
 	struct port_info total[NUM_OF_MSG_TYPES];
 	struct port_info dropped[NUM_OF_MSG_TYPES];
-	struct port_info current[NUM_OF_MSG_TYPES];
+    struct port_info current[NUM_OF_MSG_TYPES];
     struct port_info currentDropped[NUM_OF_MSG_TYPES];
 } ports_statistics;
 
@@ -50,3 +50,20 @@ enum ETitles
     eTitles_overallDropped,
     NUM_OF_TITLES
 } ETitles;
+
+/***********************************************
+* Port Statistics functions
+************************************************/
+//TODO check if dangerous
+static struct ports_statistics CopyPortsStatics(struct ports_statistics original)
+{
+    unsigned int type_index;
+    struct ports_statistics copy;
+    for (type_index = 0; type_index < NUM_OF_MSG_TYPES; type_index++)
+    {
+        copy.total[type_index] = original.total[type_index];
+        copy.dropped[type_index] = original.dropped[type_index];
+        copy.current[type_index] = original.current[type_index];
+    }
+    return copy;
+}

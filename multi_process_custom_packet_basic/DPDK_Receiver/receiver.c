@@ -15,6 +15,25 @@
 #define MBUF_CACHE_SIZE 350
 #define BURST_SIZE (1300)
 #define REFRESH_TIME (500) //in ms
+#define LCORE_MASTER (0)
+#define LCORE_SLAVE (1)
+#define NUM_OF_LCORES (2)
+
+unsigned int lcore_index;
+
+#define MULTIPLE_PRINTF_WITH_LCORE_DATA(str, ...)													\
+								for(lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)	\
+								{																	\
+									printf(str, ##__VA_ARGS__[lcore_index]);						\
+								}																	\
+								printf("\n")
+
+#define MULTIPLE_PRINTF_WITHOUT_LCORE_DATA(str, ...)												\
+								for(lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)	\
+								{																	\
+									printf(str, ##__VA_ARGS__);										\
+								}																	\
+								printf("\n")
 
 static const struct rte_eth_conf port_conf_default = {
 	.rxmode = { .max_rx_pkt_len = ETHER_MAX_LEN }
@@ -24,7 +43,8 @@ void ParsePacket(struct rte_mbuf* buf);
 void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx);
 void Init(void);
 
-struct ports_statistics stats;
+static struct ports_statistics stats[NUM_OF_LCORES];
+static struct ports_statistics slave_stats[NUM_OF_LCORES];
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
 static void print(int received, int total)
@@ -34,7 +54,6 @@ static void print(int received, int total)
 
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
-
 	printf("\nPort statistics ====================================");
 	printf("\nPackets received: %d", received);
 	printf("\nAggregate statistics ===============================");
@@ -48,25 +67,48 @@ static void PrintStatistics(void)
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
 	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
 	uint32_t sum_received = 0;
+	unsigned int lcore_ids[] = {0, 1, 2};
+	unsigned lcore_id = rte_lcore_id();
+	struct ports_statistics stable_copy_of_stats[NUM_OF_LCORES];
+
+	for (lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)
+	{
+		stable_copy_of_stats[lcore_index] = CopyPortsStatics(stats[lcore_index]);
+	}
 
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
 
 	int i = 0;
 
-	printf("====================================================\n");
-	printf("%-14s | %9s | %9s | %9s |\n", "Type #", "Current", "Total", "Dropped");
-	printf("====================================================\n");
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("====================================================");
+	MULTIPLE_PRINTF_WITH_LCORE_DATA("|%30s%-20u|", "lcore #", lcore_ids);
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("====================================================");
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("|%-13s | %9s | %9s | %9s |", "Type #", "Current", "Total", "Dropped");
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("====================================================");
 
 	for (i = 0; i < NUM_OF_MSG_TYPES; i++)
 	{
-		printf("Type #%-8d | %9d | %9d | %9d |\n", i, stats.current[i].value, stats.total[i].value, stats.dropped[i].value);
-		sum_received += stats.total[i].value;
+		for (lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)
+		{
+			printf("|Type #%-7d | %9d | %9d | %9d |",	i,
+														stable_copy_of_stats[lcore_index].current[i].value,
+														stable_copy_of_stats[lcore_index].total[i].value,
+														stable_copy_of_stats[lcore_index].dropped[i].value);
+			
+			sum_received += stable_copy_of_stats[lcore_index].total[i].value;
+		}
+		printf("\n");
 	}
 
-	printf("====================================================\n");
-	printf("Total packets received: %d\n", sum_received);
-	printf("====================================================\n");
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("====================================================");
+	printf("|Total packets received: %d\n", sum_received);
+	MULTIPLE_PRINTF_WITHOUT_LCORE_DATA("====================================================");
+	for (lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)
+	{
+		printf("|lcore #%u with stable_copy_of_stats.total[%u] = %u\n", lcore_index, lcore_id, stable_copy_of_stats[lcore_index].total[0].value);
+	}
+
 }
 
 /*
@@ -132,28 +174,30 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 void Init(void)
 {
 	int i = 0;
+	unsigned lcore_id = rte_lcore_id();
 
 	for (i = 0; i < NUM_OF_MSG_TYPES; i++)
 	{
-		stats.total[i].value = 0;
-		stats.dropped[i].value = 0;
-		stats.current[i].value = 0;
+		stats[lcore_id].total[i].value = 0;
+		stats[lcore_id].dropped[i].value = 0;
+		stats[lcore_id].current[i].value = 0;
 	}	
 }
 
 void ParsePacket(struct rte_mbuf* buf)
 {
 	struct payload p = *(struct payload*)((char*)buf->buf_addr + 128 + 14);
-	
+	unsigned lcore_id = rte_lcore_id();
+
 	// Validate msg index
 	if (p.type > NUM_OF_MSG_TYPES)
 	{
-		stats.dropped[p.index].value += 1;
+		stats[lcore_id].dropped[p.index].value += 1;
 		return;
 	}
 
-	stats.current[p.type].value += 1;
-	stats.total[p.type].value +=  1;
+	stats[lcore_id].current[p.type].value += 1;
+	stats[lcore_id].total[p.type].value +=  1;
 }
 
 void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx)
@@ -176,6 +220,9 @@ lcore_main(void)
 	//uint32_t total = 0;
 	clock_t curr_time, last_time;
 	unsigned int time_passed;
+	unsigned lcore_id = rte_lcore_id();
+
+	printf("started lcore #%u", lcore_id);
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -190,7 +237,7 @@ lcore_main(void)
 				"not be optimal.\n", PORT_RECV);
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
-			rte_lcore_id());
+			lcore_id);
 
 	/* Run until the application is quit or killed. */
 	for (;;) {
@@ -206,7 +253,9 @@ lcore_main(void)
 
 		//total += nb_rx;
 
-		if ((time_passed > REFRESH_TIME) && nb_rx > 0)
+		stats[lcore_id].total[0].value += 1;
+
+		if (lcore_id == LCORE_MASTER && (time_passed > REFRESH_TIME) && nb_rx > 0)
 		{
 			PrintStatistics();
 			last_time = curr_time;
@@ -231,6 +280,7 @@ int
 main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool;
+	unsigned lcore_id, lcore_slave_id;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
 	int ret = rte_eal_init(argc, argv);
@@ -261,6 +311,11 @@ main(int argc, char *argv[])
  
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
+
+	RTE_LCORE_FOREACH_SLAVE(lcore_slave_id)
+	{
+		rte_eal_remote_launch(lcore_main, NULL, lcore_slave_id);
+	}
 
 	/* Call lcore_main on the master core only. */
 	lcore_main();
