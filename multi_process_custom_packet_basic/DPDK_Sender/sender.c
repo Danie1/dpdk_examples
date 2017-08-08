@@ -25,7 +25,7 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (10000) //in ms
+#define REFRESH_TIME (500) //in ms
 #define NUM_OF_TYPES (16)
 #define PACKET_LIMIT (1000000000)
 
@@ -241,7 +241,7 @@ static inline int create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_
 	*buf = rte_pktmbuf_alloc(mbuf_pool);
 	
 	payload_ref = &ready_payload;
-	ready_eth_header = create_eth_header(0x010203040506, 0x05060708090a, 0x0800);
+	ready_eth_header = create_eth_header(0x010203040506, 0x000c29902802, 0x0800);
 	eth_header_ref = &ready_eth_header;
 
 	if (*buf == NULL)
@@ -404,18 +404,32 @@ static __attribute__((noreturn)) void lcore_main(struct rte_mempool * mbuf_pool)
 static void lcore_printer1(void* arg)
 {
 	unsigned lcore_id = rte_lcore_id();
+	unsigned int index = 0;
 	do
 	{
-		printf("1.lcore_id = %d\n", lcore_id);
+		printf("1.lcore_id = %d index = %u\n", lcore_id, index);
+		index++;
+		if (lcore_id != 1)
+		{
+			printf("lcore_id != %d\n", lcore_id);
+			break;
+		}
 		//sleep(1);
 	} while(1);
 }
 static void lcore_printer2(void* arg)
 {
 	unsigned lcore_id = rte_lcore_id();
+	unsigned int index = 0;
 	do
 	{
-		printf("2.lcore_id = %d\n", lcore_id);
+		printf("2.lcore_id = %d index = %u\n", lcore_id, index);
+		index++;
+		if (lcore_id != 0)
+		{
+			printf("lcore_id != %d\n", lcore_id);
+			break;
+		}
 		//sleep(1);
 	} while(1);
 }
@@ -464,8 +478,8 @@ main(int argc, char *argv[])
 	/*RTE_LCORE_FOREACH_SLAVE(lcore_id1)
 	{
 		val = rte_eal_remote_launch(lcore_printer1, NULL, lcore_id1);
-	}*/
-
+	}
+	lcore_printer2(NULL);*/
 	//printf("here after 1 - %d\n", val);
 	/*RTE_LCORE_FOREACH_SLAVE(lcore_id2)
 	{
