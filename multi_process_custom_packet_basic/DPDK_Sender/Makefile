@@ -45,6 +45,7 @@ APP = sender
 SRCS-y := sender.c
 
 CFLAGS += $(WERROR_FLAGS)
+CFLAGS += -I$(SRCDIR)/../shared
 
 # workaround for a gcc bug with noreturn attribute
 # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=12603
