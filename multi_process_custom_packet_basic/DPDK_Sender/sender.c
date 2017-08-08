@@ -25,7 +25,7 @@ static const struct rte_eth_conf port_conf_default = {
 
 #define MAX_PKT_COUNT 0xffff
 #define GET_RANDOM_BETWEEN(start, end) ((rand() % (end - start)) + start)
-#define REFRESH_TIME (10000) //in ms
+#define REFRESH_TIME (500) //in ms
 #define NUM_OF_TYPES (16)
 #define PACKET_LIMIT (1000000000)
 
@@ -241,7 +241,7 @@ static inline int create_packet(struct rte_mbuf** buf, struct rte_mempool* mbuf_
 	*buf = rte_pktmbuf_alloc(mbuf_pool);
 	
 	payload_ref = &ready_payload;
-	ready_eth_header = create_eth_header(0x010203040506, 0x05060708090a, 0x0800);
+	ready_eth_header = create_eth_header(0x010203040506, 0x000c29902802, 0x0800);
 	eth_header_ref = &ready_eth_header;
 
 	if (*buf == NULL)
