@@ -20,6 +20,8 @@
 #define NUM_OF_LCORES (2)
 
 unsigned int lcore_index;
+//TODO check what happens when core id isn't 0, 1
+unsigned lcore_ids[] = {0, 1};
 
 #define MULTIPLE_PRINTF_WITH_LCORE_DATA(str, ...)													\
 								for(lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)	\
@@ -44,22 +46,6 @@ void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx);
 void Init(void);
 
 static struct ports_statistics stats[NUM_OF_LCORES];
-static struct ports_statistics slave_stats[NUM_OF_LCORES];
-
-/* basicfwd.c: Basic DPDK skeleton forwarding example. */
-static void print(int received, int total)
-{
-	const char clr[] = { 27, '[', '2', 'J', '\0' };
-	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
-
-	/* Clear screen and move to top left */
-	printf("%s%s", clr, topLeft);
-	printf("\nPort statistics ====================================");
-	printf("\nPackets received: %d", received);
-	printf("\nAggregate statistics ===============================");
-	printf("\nTotal packets received: %d", total);
-	printf("\n====================================================\n");
-}
 
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
 static void PrintStatistics(void)
@@ -67,7 +53,6 @@ static void PrintStatistics(void)
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
 	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
 	uint32_t sum_received = 0;
-	unsigned int lcore_ids[] = {0, 1, 2};
 	unsigned lcore_id = rte_lcore_id();
 	struct ports_statistics stable_copy_of_stats[NUM_OF_LCORES];
 
@@ -95,7 +80,7 @@ static void PrintStatistics(void)
 														stable_copy_of_stats[lcore_index].current[i].value,
 														stable_copy_of_stats[lcore_index].total[i].value,
 														stable_copy_of_stats[lcore_index].dropped[i].value);
-			
+
 			sum_received += stable_copy_of_stats[lcore_index].total[i].value;
 		}
 		printf("\n");
@@ -214,12 +199,10 @@ void HandleBurst(struct rte_mbuf *bufs[BURST_SIZE], uint16_t nb_rx)
  * The lcore main. This is the main thread that does the work, reading from
  * an input port and writing to an output port.
  */
-static __attribute__((noreturn)) void
-lcore_main(void)
+static int
+lcore_main(__attribute__((unused)) void* args)
 {
 	//uint32_t total = 0;
-	clock_t curr_time, last_time;
-	unsigned int time_passed;
 	unsigned lcore_id = rte_lcore_id();
 
 	printf("started lcore #%u", lcore_id);
@@ -242,9 +225,6 @@ lcore_main(void)
 	/* Run until the application is quit or killed. */
 	for (;;) {
 		/* Get burst of RX packets, from first port of pair. */
-		curr_time = clock();
-		time_passed = ((curr_time - last_time) * 1000) / CLOCKS_PER_SEC;
-
 		/* Get burst of RX packets, from first port of pair. */
 		struct rte_mbuf *bufs[BURST_SIZE];
 		const uint16_t nb_rx = rte_eth_rx_burst(PORT_RECV, 0, bufs, BURST_SIZE);
@@ -253,13 +233,9 @@ lcore_main(void)
 
 		//total += nb_rx;
 
-		stats[lcore_id].total[0].value += 1;
+		//stats[lcore_id].total[0].value += 1;
 
-		if (lcore_id == LCORE_MASTER && (time_passed > REFRESH_TIME) && nb_rx > 0)
-		{
-			PrintStatistics();
-			last_time = curr_time;
-		}
+		
 
 		if (unlikely(nb_rx == 0))
 			continue;
@@ -269,7 +245,26 @@ lcore_main(void)
 		for (msg_index = 0; msg_index < nb_rx; msg_index++)
 			rte_pktmbuf_free(bufs[msg_index]);
 		}
+	return 0;
+}
 
+static __attribute__((noreturn)) void
+lcore_printer(void)
+{
+	clock_t curr_time, last_time;
+	unsigned int time_passed;
+	
+	while(1)
+	{
+		curr_time = clock();
+		time_passed = ((curr_time - last_time) * 1000) / CLOCKS_PER_SEC;
+
+		if ((time_passed > REFRESH_TIME)/* && nb_rx > 0*/)
+		{
+			PrintStatistics();
+			last_time = curr_time;
+		}
+	}
 }
 
 /*
@@ -280,7 +275,7 @@ int
 main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool;
-	unsigned lcore_id, lcore_slave_id;
+	unsigned lcore_id;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
 	int ret = rte_eal_init(argc, argv);
@@ -312,13 +307,16 @@ main(int argc, char *argv[])
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
 
-	RTE_LCORE_FOREACH_SLAVE(lcore_slave_id)
+	for (lcore_index = 0; lcore_index < NUM_OF_LCORES; lcore_index++)
 	{
-		rte_eal_remote_launch(lcore_main, NULL, lcore_slave_id);
+		RTE_LCORE_FOREACH_SLAVE(lcore_id)
+		{
+			rte_eal_remote_launch(lcore_main, NULL, lcore_id);
+		}
 	}
 
 	/* Call lcore_main on the master core only. */
-	lcore_main();
+	lcore_printer();
 
 	return 0;
 }
